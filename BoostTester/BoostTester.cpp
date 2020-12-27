@@ -4,7 +4,8 @@
 #include <cstdlib>
 #include <iostream>
 #include <intrin.h>
-#include "windows.h"
+#include <windows.h>
+#include <conio.h>
 #include "CPUInfo.h"
 
 using namespace std;
@@ -156,7 +157,7 @@ CPUInfo getCPUInfo()
 
 //The goal of this function is to create a "100%" load at extremely low IPC.
 //The best way I can think of to do this is by constantly stalling waiting for data from RAM.
-int runTest(int core) {
+int runTest(int core, int& key) {
 	//Setup
 	SetThreadAffinityMask(GetCurrentThread(), (static_cast<DWORD_PTR>(1) << core));
 
@@ -166,11 +167,21 @@ int runTest(int core) {
 	//This process should defeat branch predictors and prefetches 
 	//and result in needing data from RAM on every loop iteration.
 	unsigned int value = mem[0];
-	for (int i = 0; i < ARRAY_SIZE; i++)
-	{
-		//Set value equal to the value stored at an array index
-		value = mem[value];
-	}
+  for (int j = 0; j < 128; ++j)
+  {
+	  for (int i = 0; i < (ARRAY_SIZE >> 7); i++)
+	  {
+		  //Set value equal to the value stored at an array index
+		  value = mem[value];
+	  }
+    int old_key = key;
+    key = (GetKeyState(VK_UP) & 0x8000) >> 15;
+    key |= (GetKeyState(VK_DOWN) & 0x8000) >> 14;
+    key |= (GetKeyState(VK_LEFT) & 0x8000) >> 13;
+    key |= (GetKeyState(VK_RIGHT) & 0x8000) >> 13;
+    if (key != 0 && key != old_key)
+      return value;
+  }
 
 	//Return final value to prevent loop from being optimized out
 	return value;
@@ -215,17 +226,37 @@ int main()
 		mem[r] = temp;
 	}
 
-    CPUInfo info = getCPUInfo();
-    int threadsPerCore = info.getThreadsPerCore();
+  CPUInfo info = getCPUInfo();
+  int threadsPerCore = info.getThreadsPerCore();
 
 	//This value has no actual meaning, but is required to avoid runTest() being optimized out by the compiler
 	unsigned long counter = 0;
 	//This condition will never be false. Tricking the compiler....
+  bool running = true;
+  int i = info.logicalCoreCount - threadsPerCore, key = 0, old_key = 0;
 	while (counter < 0xFFFFFFFFF) {
-		for (int i = 0; i < info.logicalCoreCount; i+=threadsPerCore) {
-            cout << "Running on core: " << (i / threadsPerCore) << endl;
-			counter = runTest(i);
-		}
+    if (key != 0)
+    {
+      if (key & 1) //up
+        i += threadsPerCore;
+      else if (key & 2) //down
+        i -= threadsPerCore;
+      else if (key & 4)
+      {
+        running = !running;
+        if (!running)
+          cout << "Manual" << endl;
+        else
+          cout << "Auto" << endl;
+      }
+      old_key = key;
+    }
+    else if (running)
+      i += threadsPerCore;
+    i = i >= info.logicalCoreCount ? 0 : i;
+    i = i < 0 ? info.logicalCoreCount - threadsPerCore : i;
+    cout << "Running on core: " << (i / threadsPerCore) << endl;
+    counter = runTest(i, key);
 	}
 
 	//Have to use the return from runTest() somewhere or it gets optimized out.
